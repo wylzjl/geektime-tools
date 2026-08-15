@@ -133,8 +133,8 @@ git push && git push origin --tags
 
 前置要求（一次性）：
 
-1. 在 [npmjs.com](https://www.npmjs.com) 生成一个 **Automation / Publish 权限** 的 Access Token；
-2. 在 GitHub 仓库 → Settings → Secrets and variables → Actions 添加密钥 `NPM_TOKEN`；
+1. 在 [npmjs.com](https://www.npmjs.com) 为 `geektime-tools` 配置 **Trusted Publishing**（包页面 → Settings → Trusted Publishing，选择本仓库与 `.github/workflows/npm-publish.yml`）；
+2. 发布**无需**任何 npm Token / GitHub 密钥——workflow 通过 OIDC（`id-token: write` 权限）自动完成认证与 provenance 签名；
 3. 首次发布前本地执行一次 `npm publish --dry-run` 确认包内容（`files` 白名单已排除凭证与下载内容）。
 
 也可在 Actions 页面手动 Run workflow 重新触发发布。
