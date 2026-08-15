@@ -50,7 +50,7 @@ jobs:
       # 已配置 npm Trusted Publisher（OIDC）：无需 NODE_AUTH_TOKEN / NPM_TOKEN 密钥，
       # npm CLI 通过 id-token: write 权限自动获取 OIDC token 完成认证与 provenance 签名
       - name: Publish to npm
-        run: npm publish --provenance
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: oidc
 
