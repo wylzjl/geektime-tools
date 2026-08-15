@@ -1,6 +1,6 @@
 {
   "name": "geektime-tools",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "极客时间内容抓取命令行工具：登录、课程、专栏文章、抓取与转换",
   "bin": {
     "geektime": "./bin/geektime.cjs"
@@ -19,7 +19,12 @@
     "test": "node bin/geektime.cjs --help",
     "prepublishOnly": "npm test"
   },
-  "keywords": ["geekbang", "geektime", "cli", "scraper"],
+  "keywords": [
+    "geekbang",
+    "geektime",
+    "cli",
+    "scraper"
+  ],
   "author": "zhangjialu <jialuzhang0805@gmail.com>",
   "license": "MIT",
   "repository": "github:wylzjl/geektime-tools",
