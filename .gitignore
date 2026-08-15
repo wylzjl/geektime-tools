@@ -14,3 +14,5 @@ dist2/
 # 包管理器
 node_modules/
 .pnpm-store/
+
+.claude
