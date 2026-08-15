@@ -22,7 +22,7 @@ const ARTICLE_API_PATH = '/serv/v1/article';
 // ============ Cookie ============
 
 function loadCookies(cookiePath) {
-  const resolved = cookiePath || path.join(__dirname, 'cookies.json');
+  const resolved = cookiePath || path.join(process.cwd(), 'cookies.json');
   if (!fs.existsSync(resolved)) {
     throw new Error(`Cookie 文件不存在: ${resolved}`);
   }

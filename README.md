@@ -1,10 +1,6 @@
 # geektime-tools
 
-极客时间（time.geekbang.org）内容抓取命令行工具。基于 `geektime-fetcher.cjs` 的逻辑重构而来：
-
-- 零依赖核心：登录 / 课程 / 文章列表 / API 抓正文 全部只用 Node 内置模块；
-- `browser` 模式复用 Playwright + 系统 Chrome（`extract-article-browser.cjs`）；
-- `md` 格式自动调用 Slate→Markdown 转换（`lib/convert.cjs`）。
+极客时间（time.geekbang.org）内容抓取命令行工具。
 
 ## 安装
 
