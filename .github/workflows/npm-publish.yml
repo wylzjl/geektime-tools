@@ -47,10 +47,10 @@ jobs:
           echo "Publishing geektime-tools@$VERSION"
 
       # prepublishOnly（npm test 冒烟检查）会在 publish 前自动执行
+      # 已配置 npm Trusted Publisher（OIDC）：无需 NODE_AUTH_TOKEN / NPM_TOKEN 密钥，
+      # npm CLI 通过 id-token: write 权限自动获取 OIDC token 完成认证与 provenance 签名
       - name: Publish to npm
         run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   release:
     needs: publish
