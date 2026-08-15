@@ -62,7 +62,8 @@ jobs:
       # 若仍报 ENEEDAUTH，用 --loglevel verbose 重跑，看 "oidc" 日志行：
       #   "Failed token exchange request with body message: ..." 即为 npmjs 拒绝交换的原因。
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        # run: npm publish --provenance --access public
+        run:npm publish --provenance --access public --loglevel verbose
 
   release:
     needs: publish
