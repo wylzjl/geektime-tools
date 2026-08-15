@@ -29,7 +29,7 @@ jobs:
         uses: actions/setup-node@v6 # @v6 已确认支持 OIDC 令牌
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
+          # registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
