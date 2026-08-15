@@ -124,8 +124,11 @@ node bin/geektime.cjs sync 1005603 --format md --json | jq '.results[] | select(
 仓库已配置 GitHub Actions 自动发布（`.github/workflows/npm-publish.yml`），打标签即发布：
 
 ```bash
-# 1. 提升版本（同时更新 package.json 与 git tag）
-npm version patch     # 或 minor / major
+# 1. 先提交代码改动（含 workflow），再提升版本：
+#    ⚠️ push: tags 触发的运行使用的是 tag 指向的那个 commit 里的 workflow，
+#    若先打 tag 后改 workflow，线上跑的仍是旧版本
+git add -A && git commit -m "..."
+npm version patch     # 或 minor / major（生成 commit + v* tag）
 
 # 2. 推送并触发 Actions 发布（标签 v* 自动发布 + 生成 GitHub Release）
 git push && git push origin --tags

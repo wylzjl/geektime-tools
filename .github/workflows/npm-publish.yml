@@ -11,7 +11,7 @@ on:
 
 permissions:
   contents: write   # 创建 GitHub Release
-  id-token: write   # npm provenance（发布来源签名）需要
+  id-token: write   # OIDC 信任发布 / provenance 签名必需（npm 据此向 GitHub 获取 OIDC token）
 
 jobs:
   publish:
@@ -24,12 +24,13 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 11
-        
+
       - name: Setup Node.js
-        uses: actions/setup-node@v6 # @v6 已确认支持 OIDC 令牌
+        uses: actions/setup-node@v6
         with:
           node-version: 24
-          # registry-url: https://registry.npmjs.org
+          # 注意：不要设置 registry-url / NODE_AUTH_TOKEN —— OIDC 信任发布
+          # 不使用 .npmrc 凭据，npm 会自动向 GitHub 请求 OIDC token 完成认证
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -46,18 +47,22 @@ jobs:
           fi
           echo "Publishing geektime-tools@$VERSION"
 
-      # prepublishOnly（npm test 冒烟检查）会在 publish 前自动执行
-      # 已配置 npm Trusted Publisher（OIDC）：无需 NODE_AUTH_TOKEN / NPM_TOKEN 密钥，
-      # npm CLI 通过 id-token: write 权限自动获取 OIDC token 完成认证与 provenance 签名
-      - name: Publish to npm
+      # 诊断：确认 id-token: write 生效。若缺失，npm 会静默跳过 OIDC 并报 ENEEDAUTH
+      - name: Check OIDC environment
         run: |
-          # 清理可能干扰 OIDC 的残留配置
-          npm config delete _authToken 2>/dev/null || true
-          npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
-          # 使用最新版 npm 发布
-          npx npm@latest publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: oidc
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+            echo "OIDC token request env: OK"
+          else
+            echo "::error::ACTIONS_ID_TOKEN_REQUEST_* 环境变量缺失，请检查 workflow 的 permissions.id-token: write"
+            exit 1
+          fi
+
+      # prepublishOnly（npm test 冒烟检查）会在 publish 前自动执行。
+      # Trusted Publisher（OIDC）：npm 自动获取 OIDC token 认证 + provenance 签名，无需任何 Token。
+      # 若仍报 ENEEDAUTH，用 --loglevel verbose 重跑，看 "oidc" 日志行：
+      #   "Failed token exchange request with body message: ..." 即为 npmjs 拒绝交换的原因。
+      - name: Publish to npm
+        run: npm publish --provenance --access public
 
   release:
     needs: publish
