@@ -20,7 +20,7 @@
 //      新会话在正文接口上可能仍只给预览版。
 //
 // 前置：使用系统已安装的 Google Chrome（无需 `playwright install` 下载浏览器）。
-//   安装依赖：pnpm add playwright
+//   安装依赖：pnpm add playwright-core（更小、不下载浏览器；兼容已装 playwright 的环境）
 //   账号配置：项目根目录 .env（phone=手机号 / password=密码）
 // 用法：
 //   node -e "require('./extract-article-browser.cjs').extractArticle(1005603).then(r=>console.log(r.title, r.content.length))"
@@ -28,17 +28,22 @@
 const fs = require('fs');
 const path = require('path');
 
-// 惰性加载 playwright：未安装时给出清晰提示，而不是 module 加载即报错
+// 惰性加载 playwright-core（优先）或 playwright：未安装时给出清晰提示，而不是 module 加载即报错
 let _chromium = null;
 function getChromium() {
   if (_chromium) return _chromium;
   try {
-    ({ chromium: _chromium } = require('playwright'));
+    ({ chromium: _chromium } = require('playwright-core'));
     return _chromium;
   } catch {
-    throw new Error(
-      '未安装 playwright，请先执行: pnpm add playwright（本实现使用系统 Chrome，无需再执行 pnpm exec playwright install）'
-    );
+    try {
+      ({ chromium: _chromium } = require('playwright'));
+      return _chromium;
+    } catch {
+      throw new Error(
+        '未安装 playwright-core，请先执行: pnpm add playwright-core（本实现使用系统 Chrome，无需执行 playwright install）'
+      );
+    }
   }
 }
 
@@ -49,13 +54,13 @@ const DESKTOP_UA =
 const CONTENT_READY_SELECTOR =
   '[data-slate-type="paragraph"], [data-slate-type="heading"], [class*="articleContent"]';
 
-// 默认持久化 profile 目录：第 2 次起复用登录会话
-const DEFAULT_PROFILE_DIR = path.join(__dirname, '.browser-profile');
+// 默认持久化 profile 目录：以当前运行目录为基准（全局安装后包目录不可写）
+const DEFAULT_PROFILE_DIR = path.join(process.cwd(), '.browser-profile');
 
 // ============ 配置 ============
 
 function loadEnvCredentials(envPath) {
-  const resolved = envPath || path.join(__dirname, '.env');
+  const resolved = envPath || path.join(process.cwd(), '.env');
   if (!fs.existsSync(resolved)) {
     throw new Error(
       `配置文件 ${resolved} 不存在！请创建并填入:\nphone=你的手机号\npassword=你的密码`

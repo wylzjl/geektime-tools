@@ -1,8 +1,16 @@
-# 运行时生成的 Chrome 持久化 profile（含登录会话 Cookie），勿提交
-.browser-profile/
+# macOS
+.DS_Store
 
-# 登录凭证
+# 登录凭证与会话 Cookie，勿提交
 .env
+cookies.json
+
+# 运行时产物：Chrome 持久化 profile / 下载的文章内容 / 转换输出
+.browser-profile/
+cc_conversions/
 dist*
-cookie.json
+dist2/
+
+# 包管理器
 node_modules/
+.pnpm-store/

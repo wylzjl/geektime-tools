@@ -2,28 +2,41 @@
   "name": "geektime-tools",
   "version": "1.0.0",
   "description": "极客时间内容抓取命令行工具：登录、课程、专栏文章、抓取与转换",
-  "main": "bin/geektime.cjs",
   "bin": {
     "geektime": "./bin/geektime.cjs"
   },
+  "files": [
+    "bin",
+    "commands",
+    "lib",
+    "extract-article-api.cjs",
+    "extract-article-browser.cjs",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "geektime": "node bin/geektime.cjs",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node bin/geektime.cjs --help",
+    "prepublishOnly": "npm test"
   },
   "keywords": ["geekbang", "geektime", "cli", "scraper"],
-  "author": "",
-  "license": "ISC",
+  "author": "zhangjialu <jialuzhang0805@gmail.com>",
+  "license": "MIT",
+  "repository": "github:wylzjl/geektime-tools",
+  "engines": {
+    "node": ">=18"
+  },
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
       "version": "^11.15.1",
-      "onFail": "download"
+      "onFail": "warn"
     }
   },
   "type": "module",
   "dependencies": {
     "cheerio": "^1.2.0",
     "commander": "^12.1.0",
-    "playwright": "^1.62.1"
+    "playwright-core": "^1.62.1"
   }
 }

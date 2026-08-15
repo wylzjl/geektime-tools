@@ -11,8 +11,8 @@ program
   .name('geektime')
   .description('极客时间内容抓取 CLI：登录、课程、专栏文章、抓取与转换')
   .version(require('../package.json').version, '-v, --version', '输出版本号')
-  .option('--config <path>', '.env 配置文件路径（默认项目根目录 .env）')
-  .option('--cookies <path>', 'cookies.json 路径（默认项目根目录 cookies.json）')
+  .option('--config <path>', '.env 配置文件路径（默认当前目录 .env）')
+  .option('--cookies <path>', 'cookies.json 路径（默认当前目录 cookies.json）')
   .option('--json', '以 JSON 输出结果（日志改写到 stderr）')
   .option('--quiet', '静默模式（只输出错误）')
   .option('--verbose', '输出调试日志');
