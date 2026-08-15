@@ -1,0 +1,1584 @@
+ ▐▛███▜▌   Claude Code v2.1.231
+▝▜█████▛▘  deepseek-v4-flash · API Usage Billing
+  ▘▘ ▝▝    ~/mycode/geektime-keepsake/geektime-tools
+
+
+❯ /skills 
+  ⎿  No changes
+
+❯ @geektime-fetcher.cjs @output/html/01｜全景：Agent                            
+  开发的技术演进与课程定位.html 我本意是用这个脚本提取极客时间课程的HTML内容。  
+  但从提取文件可以看出html文件不是最终渲染产物,                                 
+  如何解决这个问题,请提供思路,不要修改代码                                      
+  ⎿  Read geektime-fetcher.cjs (279 lines)
+
+  Thought for 36s, searched for 1 pattern, read 1 file, listed 2 directories (ctrl+o to expand)
+
+⏺ 分析清楚了。先说结论，再给思路。
+
+  根因
+
+  你的 .env、cookies.json、convert.cjs
+  都有了，问题出在抓取的目标不对，不是转换的问题：
+
+  1. 极客时间文章页是 Vue 单页应用（CSR）。服务器返回的 HTML 只是一个空壳——<div 
+  id="app"></div> + 一堆 JS（你贴的文件第 49-50 行就是这样）。真正的正文由
+  main.js 在浏览器里调用 JSON 接口、渲染到 #app 里。所以直接保存页面 URL
+  拿到的永远是壳。
+  2. 当前 getArticleDetail 用的 GET /column/article/{id} 正是那个页面 
+  URL（脚本第 182 行），拿回来的就是 6.6KB 的空壳，正文一个字都没有。
+  3. convert.cjs 其实是为"渲染后的正文片段"写的——它依赖
+  data-slate-type、data-code-language 这些标记。我验证过：你仓库里那个 886KB 的
+  page.html（浏览器里"另存为完整网页"存的）里才有这些标记（223 个 mark-class、89
+  个 code-line…），而 output/html/*.html
+  里一个都没有。说明转换器等着吃的是"正文 HTML 片段"，不是页面。
+
+  解决思路（从轻到重）
+
+  思路 1：改用 SPA 底层的 JSON 数据接口（推荐）
+
+  正文既然由 Vue 渲染，就一定有一个返回正文的 JSON 接口：
+  - 浏览器打开文章页 → F12 → Network → 过滤 XHR → 刷新，能看到 Vue
+  请求的那个接口（形如 POST 
+  https://time.geekbang.org/serv/v1/article，请求体带文章 id）。
+  - 它返回的 data.article_content 就是带 data-slate-type 标记的渲染后正文 HTML 
+  片段——正好是 convert.cjs 期待的输入。
+  - 改法：抓取环节换成调这个 JSON 接口 → 拿到 article_content HTML → 交给现有
+  convert.cjs 转 Markdown 即可。
+  - 优点：无浏览器依赖、轻量、正文完整；缺点：要自己在 Network
+  里抄接口参数、请求需带登录 Cookie + Origin/Referer（脚本注释里已提到 WAF 451
+  的问题）。
+
+  思路 2：用无头浏览器渲染后再提取（真正的"最终渲染产物"）
+
+  用 Playwright / Puppeteer 打开文章 URL，注入 cookies.json 的登录态，等 #app
+  里出现正文后：
+  - page.content() 拿完整渲染 HTML；或只取正文容器 innerHTML 交给
+  convert.cjs；或直接截图 / 导出 PDF。
+  - 优点：100% 还原最终效果，连懒加载图片、KaTeX
+  公式、代码高亮都带上；缺点：要下
+  Chromium、重、要处理懒加载等待，图片资源仍要单独下载。
+
+  思路 3：手动兜底
+
+  浏览器打开 → 右键"另存为 → 网页，全部"（page.html 就是这么来的，连 images
+  文件夹一起存）；或"打印 → 另存为 PDF"。零代码，但逐篇手动。
+
+  几个共同要注意的坑
+
+  - 登录态：全文需要已购 + Cookie，无头浏览器要手动注入 cookies.json。
+  - 图片：在 static001.geekbang.org，多为懒加载（data-src 存真实地址），转
+  Markdown 时 src 可能是占位符，需要单独解析真实 URL 并下载。
+  - KaTeX 公式：正文里是特殊 HTML 节点，转 Markdown 时要考虑转成 LaTeX。
+  - 反爬：带 Origin/Referer，否则 WAF 返回 451。
+
+  我的建议：优先做思路 1——你的 convert.cjs 已经是为它准备的，整条链路（JSON 接口
+  → article_content → Markdown）改动最小、最稳。思路 2 留着当"有些页面内容只在
+  JS 渲染后才有"时的兜底。需要我帮你动手改的话说一声。
+
+✻ Sautéed for 43s
+
+※ recap: 你想让 geektime-fetcher.cjs 抓到的不是 SPA 空壳 HTML，而是文章正文。根因已定位：脚本抓的是页面 URL，正文得走底层 JSON 接口。下一步：在 DevTools Network 里找到那个返回 article_content 的接口，然后改抓取逻辑。 (disable recaps in /config)
+
+❯ 请分别按照方案1 和 方案2 各实现一版文章内容提取的函数供我测试,                
+  要求:2个方案的实现都使用独立的文件导出函数                                    
+
+  Thought for 12s, listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+⏺ Dependencies only have cheerio — no headless browser yet. Let me first verify
+  the JSON content API endpoint (方案1's core) with your cookies against a known
+  article id before writing the implementation.
+
+  Thought for 1s, read 1 file (ctrl+o to expand)
+
+⏺ Write(/tmp/test-api.mjs)
+  ⎿  Added 38 lines, removed 13 lines
+       1  import fs from 'fs';
+       2  import path from 'path';
+       3  import { fileURLToPath } from 'url';
+       4 +import https from 'https';                                     
+       5 +                                                               
+       6  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+       7  const cookies = JSON.parse(fs.readFileSync(path.join(__dirname,
+           'cookies.json'), 'utf-8'));
+       8  const cookieStr = Object.entries(cookies).map(([k, v]) => `${k}
+          =${v}`).join('; ');
+       9  
+       8 -function post(host, path_, body) {                             
+      10 +function request(method, hostname, path_, body) {              
+      11    return new Promise((resolve, reject) => {
+      10 -    const req = httpsReq(host, path_, body, cookieStr, (res) =>
+         - {                                                             
+      12 +    const options = {                                          
+      13 +      hostname, path: path_, method,                           
+      14 +      headers: {                                               
+      15 +        'Cookie': cookieStr,                                   
+      16 +        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 1
+         +0_15_7) AppleWebKit/537.36',                                   
+      17 +        'Content-Type': 'application/json',                    
+      18 +        'Origin': 'https://time.geekbang.org',                 
+      19 +        'Referer': 'https://time.geekbang.org/'                
+      20 +      }                                                        
+      21 +    };                                                         
+      22 +    const req = https.request(options, (res) => {              
+      23        let data = '';
+      24        res.on('data', c => data += c);
+      25        res.on('end', () => resolve({ status: res.statusCode, bod
+          y: data }));
+      26      });
+      27      req.on('error', reject);
+      28 +    if (body) req.write(typeof body === 'string' ? body : JSON.
+         +stringify(body));                                              
+      29      req.end();
+      30    });
+      31  }
+      32  
+      20 -async function tryPost(host, p, body) {                        
+      21 -  const r = await post(host, p, body);                         
+      22 -  let parsed = null;                                           
+      23 -  try { parsed = JSON.parse(r.body); } catch {}                
+      24 -  const ac = parsed?.data?.article_content;                    
+      25 -  const slate = typeof ac === 'string' && ac.includes('data-sla
+         -te-type');                                                     
+      26 -  console.log(`POST ${host}${p} -> HTTP ${r.status}, code=${par
+         -sed?.code}, article_content=${typeof ac} len=${typeof ac === 's
+         -tring' ? ac.length : '-'}, hasSlate=${slate}`);                
+      27 -  return parsed;                                               
+      28 -}                                                              
+      33 +const articleId = 993750;                                      
+      34 +const candidates = [                                           
+      35 +  ['POST', 'time.geekbang.org', '/serv/v1/article', { id: artic
+         +leId }],                                                       
+      36 +  ['POST', 'time.geekbang.org', '/serv/v1/article', { id: artic
+         +leId, article_id: articleId }],                                
+      37 +  ['POST', 'time.geekbang.org', '/serv/v1/article/detail', { id
+         +: articleId }],                                                
+      38 +  ['GET', 'time.geekbang.org', `/serv/v1/article/${articleId}`,
+         + null],                                                        
+      39 +];                                                             
+      40  
+      30 -const https = await import('https');                           
+      31 -// need https module in scope of post; quick patch             
+      41 +for (const [method, host, p, body] of candidates) {            
+      42 +  try {                                                        
+      43 +    const r = await request(method, host, p, body);            
+      44 +    let parsed = null;                                         
+      45 +    try { parsed = JSON.parse(r.body); } catch {}              
+      46 +    const ac = parsed?.data?.article_content;                  
+      47 +    const slate = typeof ac === 'string' && ac.includes('data-s
+         +late-type');                                                   
+      48 +    console.log(`${method} ${host}${p} -> HTTP ${r.status}, cod
+         +e=${parsed?.code}, msg=${parsed?.msg?.slice?.(0, 40)}, article_
+         +content type=${typeof ac} len=${typeof ac === 'string' ? ac.len
+         +gth : '-'}, hasSlate=${slate}`);                               
+      49 +    if (typeof ac === 'string' && ac.length > 100) {           
+      50 +      console.log('  article_content head:', ac.slice(0, 300).r
+         +eplace(/\n/g, ' '));                                           
+      51 +      console.log('  data keys:', Object.keys(parsed?.data || {
+         +}).join(', '));                                                
+      52 +    }                                                          
+      53 +  } catch (e) {                                                
+      54 +    console.log(`${method} ${host}${p} -> ERROR ${e.message}`);
+      55 +  }                                                            
+      56 +}                                                              
+
+  Thought for 2s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Update(/tmp/test-api.mjs)
+  ⎿  Added 1 line, removed 1 line
+      3  import { fileURLToPath } from 'url';
+      4  import https from 'https';
+      5  
+      6 -const __dirname = path.dirname(fileURLToPath(import.meta.url)); 
+      6 +const __dirname = '/Users/jialuzhang/mycode/geektime-keepsake/ge
+        +ektime-tools';                                                  
+      7  const cookies = JSON.parse(fs.readFileSync(path.join(__dirname, 
+         'cookies.json'), 'utf-8'));
+      8  const cookieStr = Object.entries(cookies).map(([k, v]) => `${k}=
+         ${v}`).join('; ');
+      9  
+
+  Thought for 8s, ran 1 shell command (ctrl+o to expand)
+
+⏺ 方案1的 JSON 接口确认可用：POST /serv/v1/article，body {"id": 993750} 返回
+  data.article_content（纯 HTML，约 6KB）。但注意它不带 data-slate-type
+  标记——而你浏览器保存的 page.html 里有。让我确认下 SPA 渲染的 slate
+  内容来源，这对两个方案的实现细节有影响。
+
+  Thought for 10s, searched for 2 patterns, ran 1 shell command (ctrl+o to expand)
+
+⏺ page.html 其实是另一篇（1005218，ChatPanel）。让我确认这篇文章的 API
+  返回是否带 slate 标记。
+
+  Thought for 10s, searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+⏺ The slate-rendered content in page.html comes from an XHR the SPA makes — not
+  from /serv/v1/article. Let me check main.js to find the real content endpoint
+  the browser uses, so 方案1 can match what the rendered page shows.
+
+  Thought for 13s, searched for 1 pattern, read 1 file, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Let me verify whether the browser's slate-rendered content and the API's plain
+  HTML actually contain the same text (determines if 方案1 can substitute for
+  the rendered page):
+
+  Thought for 10s, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Found a critical detail: the URL id (1005218 → article 19 ChatPanel) and the
+  API id (1005218 → article 18 安全护栏) are different id spaces. Let me confirm
+  how ids map between the column list, the URL, and the API:
+
+  Thought for 12s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Now the id mapping is clear: the column-list id is what both the URL and the
+  content API use. The earlier "discrepancy" was my comparison error (page.html
+  is article 19, I compared against API article 18). Let me confirm 方案1's
+  plain HTML matches the browser's slate content for the same article, and check
+  what browser tooling is available on this machine for 方案2:
+
+  Thought for 30s, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Confirmed the full picture now:
+  - 方案1 (API): POST /serv/v1/article 返回与页面一致的正文章节（article 19
+  的两个标题都匹配），纯语义 HTML。
+  - 方案2 (Browser): 系统已装 Google Chrome → 可用 Playwright channel:'chrome'
+  复用系统浏览器，无需下载 Chromium。
+
+  Let me track this work and implement both files.
+⏺ Write(extract-article-api.cjs)
+  ⎿  Wrote 124 lines to extract-article-api.cjs
+       1 // extract-article-api.cjs
+         。
+       3 //
+         是 Vue 单页应用，
+       5 // 服务端只返回空壳 HTML，正文由前端再调接口渲染。本脚本直接调正
+       6 // 拿到 `data.article_content`（带 `<p>/<h2>/<ul>/<pre>` 等语义
+         标记的 HTML 片段）。
+       8 // 依赖：无第三方依赖（仅 Node 内置模块）。
+       9 // 用法：
+         1005603).then(r=>console.log(r.title, r.content.length))"
+     … +126 lines (ctrl+o to expand)
+
+⏺ Write(extract-article-browser.cjs)
+  ⎿  Wrote 145 lines to extract-article-browser.cjs
+       1 // extract-article-browser.cjs
+       2 // 方案 2：用无头浏览器打开文章页，等正文渲染完成后再提取——拿到"
+       3 //
+       4 // 与方案 1（JSON 接口）的区别：
+       5 //   - 页面里由 JS 渲染的正文（含 Slate 富文本标记 data-slate-ty
+       6 //     代码高亮、懒加载图片等）会被真实渲染出来；
+       7 //   - 默认 mode='html' 提取正文容器的 innerHTML，带 data-slate-
+         type 标记，
+       9 //   - 代价是需要浏览器进程，速度较慢。
+      10 //
+     … +156 lines (ctrl+o to expand)
+
+⏺ Now install playwright and test both functions:
+
+  Thought for 21s, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Write(/tmp/test-both.cjs)
+  ⎿  Wrote 40 lines to ../../../../../tmp/test-both.cjs
+       1 // 测试两个提取方案
+       2 const path = require('path');
+       3 const API = require('/Users/jialuzhang/mycode/geektime-keepsake/
+       4 const BROWSER = require('/Users/jialuzhang/mycode/geektime-keeps
+         ake/geektime-tools/extract-article-browser.cjs');
+       5 
+       6 const articleId = 1005603; // 19｜扩展：ChatPanel...
+       8 (async () => {
+       9   console.log('========== 方案1: JSON API ==========');
+      10   const r1 = await API.fetchArticle(articleId);
+     … +44 lines (ctrl+o to expand)
+
+  Thought for 5s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Both functions work — 方案1 returns clean HTML (8.5KB, 73 metadata fields),
+  方案2 returns slate-rendered DOM with data-slate-type (15KB, status 200). But
+  the browser text comparison (940 chars) looks suspiciously short. Let me
+  inspect the browser output to verify nothing was truncated:
+
+  Thought for 11s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmed: the browser only rendered the first section — GeekTime lazy-renders
+  article content on scroll (that's why your hand-saved page.html had all 11
+  headings). 方案2 needs an auto-scroll loop to trigger lazy rendering before
+  extraction. Let me fix that:
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 31 lines
+      53    '[data-slate-type="paragraph"], [data-slate-type="heading"], 
+          [class*="articleContent"]';
+      54  
+      55  /**
+      56 + * 在页面内自动滚动到底部，触发懒加载的文章正文逐段渲染，      
+      57 + * 直到页面高度不再增长或达到最大滚动次数。                    
+      58 + */                                                            
+      59 +function scrollToTriggerLazyLoad(page, maxScrolls = 60) {      
+      60 +  return page.evaluate((maxScrolls) => {                       
+      61 +    return new Promise((resolve) => {                          
+      62 +      const delay = (ms) => new Promise((r) => setTimeout(r, ms
+         +));                                                            
+      63 +      let prev = 0;                                            
+      64 +      let i = 0;                                               
+      65 +      const tick = async () => {                               
+      66 +        const targets = [document.documentElement, document.bod
+         +y];                                                            
+      67 +        const scrollable = targets.find(                       
+      68 +          (t) => t.scrollHeight > t.clientHeight + 50          
+      69 +        );                                                     
+      70 +        const el = scrollable || document.body;                
+      71 +        el.scrollTop = el.scrollHeight;                        
+      72 +        await delay(250);                                      
+      73 +        const cur = el.scrollHeight;                           
+      74 +        if (cur === prev || ++i >= maxScrolls) return resolve()
+         +;                                                              
+      75 +        prev = cur;                                            
+      76 +        return tick();                                         
+      77 +      };                                                       
+      78 +      tick();                                                  
+      79 +    });                                                        
+      80 +  }, maxScrolls);                                              
+      81 +}                                                              
+      82 +                                                               
+      83 +/**                                                            
+      84   * 用无头浏览器打开文章页，等待正文渲染后提取。
+      85   * @param {number|string} articleId 文章 id（与 URL `/column/ar
+          ticle/{id}` 一致）
+      86   * @param {object} [options]
+     ...
+      91   *   full: 整页渲染后的完整 HTML（document.documentElement.oute
+          rHTML）
+      92   * @param {boolean} [options.headless=true] 设为 false 可观察浏
+          览器执行过程
+      93   * @param {number} [options.waitTimeout=30000] 等待正文渲染的超
+          时（毫秒）
+      94 + * @param {number} [options.maxScrolls=60] 自动滚动的最大次数（
+         +触发懒加载）                                                   
+      95   * @returns {Promise<{
+      96   *   articleId: number,
+      97   *   title: string,
+     ...
+      133      await page.waitForSelector(CONTENT_READY_SELECTOR, {
+      134        timeout: options.waitTimeout ?? 30000,
+      135      });
+      136 +    // 自动滚动触发懒加载的正文段落                           
+      137 +    await scrollToTriggerLazyLoad(page, options.maxScrolls ?? 
+          +60);                                                          
+      138      // 再等网络空闲，尽量让懒加载图片/样式完成
+      139      await page.waitForLoadState('networkidle').catch(() => {})
+           ;
+      140  
+
+  Thought for 4s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Scroll didn't change anything — the content isn't scroll-lazy. The container
+  selector must be capturing only part of the article. Let me check where all
+  headings actually live in the fully-loaded page.html:
+
+  Thought for 6s, ran 1 shell command (ctrl+o to expand)
+
+⏺ The wrapper is correct in the fully-loaded page — so a fresh load genuinely
+  renders only the first section and the rest loads on scroll, but my scroll
+  isn't triggering it. Let me debug the live page's scroll mechanics directly:
+
+⏺ Write(/tmp/debug-scroll.cjs)
+  ⎿  Wrote 55 lines to ../../../../../tmp/debug-scroll.cjs
+       1 const path = require('path');
+         keepsake/geektime-tools/node_modules/playwright');
+       3 
+       5 const cookies = JSON.parse(fs.readFileSync('/Users/jialuzhang/my
+       6 
+       7 (async () => {
+         dless: true, args: ['--disable-blink-features=AutomationControll
+         ed'] });
+         /5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHT
+      10   await context.addCookies(Object.entries(cookies).map(([
+     … +64 lines (ctrl+o to expand)
+
+  Thought for 6s, ran 1 shell command (ctrl+o to expand)
+⏺ Critical finding: the page is a fixed-height layout — window doesn't scroll at
+  all (scrollY stays 0). The article scrolls inside a SimpleBar container
+  (simplebar-content-wrapper). My scroll loop targeted the wrong element. Let me
+  scroll the actual container:
+
+⏺ Write(/tmp/debug-scroll2.cjs)
+  ⎿  Wrote 49 lines to ../../../../../tmp/debug-scroll2.cjs
+      1 const { chromium } = require('/Users/jialuzhang/mycode/geektime-k
+      2 const fs = require('fs');
+      3 const cookies = JSON.parse(fs.readFileSync('/Users/jialuzhang/myc
+      4 
+      5 (async () => {
+        less: true, args: ['--disable-blink-features=AutomationControlled
+        '] });
+        5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
+        , like Gecko) Chrome/126.0.0.0 Safari/537.36' });
+        lue]) => ({ name, value
+     … +60 lines (ctrl+o to expand)
+
+  Thought for 7s, ran 1 shell command (ctrl+o to expand)
+
+⏺ The SimpleBar scroll doesn't add paragraphs either — only 7 exist in the fresh
+  DOM, yet page.html had the full article. The full content must load via
+  another trigger. Let me watch network requests and dump what's actually in the
+  container:
+
+⏺ Write(/tmp/debug-scroll3.cjs)
+  ⎿  Wrote 39 lines to ../../../../../tmp/debug-scroll3.cjs
+      1 const { chromium } = require('/Users/jialuzhang/mycode/geektime-k
+      2 const fs = require('fs');
+      3 const cookies = JSON.parse(fs.readFileSync('/Users/jialuzhang/myc
+      4 
+      5 (async () => {
+        less: true, args: ['--disable-blink-features=AutomationControlled
+        '] });
+        5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
+        , like Gecko) Chrome/126.0.0.0 Safari/537.36' });
+        lue]) => ({ name, value
+     … +47 lines (ctrl+o to expand)
+
+  Thought for 10s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Key finding: the browser's article request sends
+  {"id":"1005603","include_neighbors":true,"is_freelyread":true} and shows a
+  preview (7 paragraphs + "立即购买" button = truncated/freely-read version). My
+  方案1 call {"id": N} returned the full article. Let me verify this
+  hypothesis:
+
+  Thought for 6s, ran 1 shell command (ctrl+o to expand)
+
+⏺ The API returns the full article regardless of payload — so truncation isn't
+  from the API. The browser is likely not authenticated properly (showing
+  free-preview). Let me check the browser's auth state:
+
+⏺ Write(/tmp/debug-auth.cjs)
+  ⎿  Wrote 47 lines to ../../../../../tmp/debug-auth.cjs
+      1 const { chromium } = require('/Users/jialuzhang/mycode/geektime-k
+      2 const fs = require('fs');
+      3 const cookies = JSON.parse(fs.readFileSync('/Users/jialuzhang/myc
+      4 
+      5 (async () => {
+        less: true, args: ['--disable-blink-features=AutomationControlled
+        '] });
+        5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
+        , like Gecko) Chrome/126.0.0.0 Safari/537.36' });
+        lue]) => ({ name, value
+     … +56 lines (ctrl+o to expand)
+
+  Thought for 17s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Now it's clear: the browser session is not authenticated — user/auth returns
+  未登录, the page shows 登录|注册, and /serv/v1/article returns
+  用户未购买此专栏 → free preview. Yet the direct API call with the same cookies
+  returns full content. Let me pinpoint the difference:
+
+⏺ Write(/tmp/debug-auth2.cjs)
+  ⎿  Wrote 44 lines to ../../../../../tmp/debug-auth2.cjs
+       1 const https = require('https');
+       3 const { chromium } = require('/Users/jialuzhang/mycode/geektime-
+         keepsake/geektime-tools/node_modules/playwright');
+       5 const cookies = JSON.parse(fs.readFileSync('/Users/jialuzhang/my
+       6 const cookieStr = Object.entries(cookies).map(([k, v]) => `${k}=
+         ${v}`).join('; ');
+       8 function directCall() {
+       9   return new Promise((res, rej) => {
+         ath: '/serv/v1/article', method: 'POST', headers: { 'Cookie': co
+         time.geekbang.org', 'Referer': 'https://time.geekba
+     … +58 lines (ctrl+o to expand)
+
+  Thought for 16s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Root cause emerging: cookies.json has uppercase GCID/GRID/GCESS (my earlier
+  lowercase read was a .toLowerCase() artifact), and the direct node call
+  authenticates fine — but the browser isn't sending working auth cookies
+  (in-browser fetch gets 用户未购买). Let me capture the actual Cookie header
+  the browser sends and test a header-injection alternative:
+
+⏺ Write(/tmp/debug-auth3.cjs)
+  ⎿  Wrote 52 lines to ../../../../../tmp/debug-auth3.cjs
+       1 const https = require('https');
+       3 const { chromium } = require('/Users/jialuzhang/mycode/geektime-
+         keepsake/geektime-tools/node_modules/playwright');
+       5 const cookies = JSON.parse(fs.readFileSync('/Users/jialuzhang/my
+       6 const cookieStr = Object.entries(cookies).map(([k, v]) => `${k}=
+         ${v}`).join('; ');
+       8 async function runVariant(label, setup) {
+       9   const browser = await chromium.launch({ channel: 'chrome', hea
+         ed'] });
+         /5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
+     … +61 lines (ctrl+o to expand)
+
+  Thought for 16s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Breakthrough: even with the exact same Cookie header that works in node, the
+  browser request gets 未购买. The remaining variable is the TLS/anti-bot
+  fingerprint — acw_tc is Alibaba WAF's cookie bound to the TLS fingerprint;
+  node's acw_tc doesn't match Chrome's fingerprint, so the browser session is
+  treated as invalid. The fix: perform the login inside the browser so it gets
+  cookies bound to Chrome's own fingerprint. Let me verify:
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Write(/tmp/debug-login.cjs)
+  ⎿  Wrote 47 lines to ../../../../../tmp/debug-login.cjs
+      1 const { chromium } = require('/Users/jialuzhang/mycode/geektime-k
+      2 
+      3 const phone = '17764530241';
+      4 const password = 'Iloveyyq1314';
+      6 (async () => {
+      7   const browser = await chromium.launch({ channel: 'chrome', head
+        '] });
+      8   const context = await browser.newContext({ userAgent: 'Mozilla/
+        5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML
+      9   const page = await context.newPage();
+     … +54 lines (ctrl+o to expand)
+
+  Thought for 11s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Login inside the browser works perfectly: 47 paragraphs, 11 headings, no buy
+  button — full authenticated content matching page.html. The WAF acw_tc is
+  bound to node's TLS fingerprint, which is why saved-cookie injection fails in
+  Chrome.
+
+  Let me check one cheaper alternative — inject saved cookies but let the
+  browser generate its own acw_tc:
+
+  Thought for 10s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmed: even without acw_tc, auth-cookie injection fails — the session
+  cookies are bound to the origin's TLS fingerprint. Browser login is the only 
+  reliable auth for 方案2. Let me rewrite extract-article-browser.cjs to log in
+  inside the browser (reading .env credentials like the fetcher does):
+
+⏺ Write(extract-article-browser.cjs)
+  ⎿  Added 118 lines, removed 46 lines
+       2  // 方案 2：用无头浏览器打开文章页，等正文渲染完成后再提取——拿到
+          "最终渲染产物"。
+       3  //
+       4  // 与方案 1（JSON 接口）的区别：
+       5 -//   - 页面里由 JS 渲染的正文（含 Slate 富文本标记 data-slate-t
+         -ype、KaTeX 公式、                                              
+       6 -//     代码高亮、懒加载图片等）会被真实渲染出来；              
+       5 +//   - 页面里由 JS 渲染的正文（含 Slate 富文本标记 data-slate-t
+         +ype、代码高亮、                                                
+       6 +//     懒加载图片等）会被真实渲染出来；                        
+       7  //   - 默认 mode='html' 提取正文容器的 innerHTML，带 data-slate
+          -type 标记，
+       8  //     可直接喂给你已有的 convert.cjs 转 Markdown；
+       9 -//   - 代价是需要浏览器进程，速度较慢。                        
+       9 +//   - 代价是需要浏览器进程，速度较慢（单篇约 4~12s）。        
+      10  //
+      11 +// ⚠️ 登录方式说明：                                           
+      12 +//   极客时间把会话 Cookie（acw_tc / GCID / GCESS 等）绑定到客 
+         +户端的 TLS 指纹，                                              
+      13 +//   直接用 cookies.json 里的值注入浏览器会失效（返回"用户未购 
+         +买此专栏"的预览版）。                                          
+      14 +//   因此本实现会在浏览器内用 .env 的账号密码重新登录，拿到绑定
+         + Chrome 指纹的会话。                                           
+      15 +//                                                             
+      16  // 前置：使用系统已安装的 Google Chrome（无需 `playwright insta
+          ll` 下载浏览器）。
+      17  //   安装依赖：pnpm add playwright
+      18 +//   账号配置：项目根目录 .env（phone=手机号 / password=密码） 
+      19  // 用法：
+      20  //   node -e "require('./extract-article-browser.cjs').extractA
+          rticle(1005603).then(r=>console.log(r.title, r.content.length))
+          "
+      21  
+     ...
+       36    }
+       37  }
+       38  
+       33 -function loadCookies(cookiePath) {                            
+       34 -  const resolved = cookiePath || path.join(__dirname, 'cookies
+          -.json');                                                      
+       39 +const DESKTOP_UA =                                            
+       40 +  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit
+          +/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';  
+       41 +                                                              
+       42 +// ============ 配置 ============                             
+       43 +                                                              
+       44 +function loadEnvCredentials(envPath) {                        
+       45 +  const resolved = envPath || path.join(__dirname, '.env');   
+       46    if (!fs.existsSync(resolved)) {
+       36 -    throw new Error(`Cookie 文件不存在: ${resolved}`);        
+       47 +    throw new Error(                                          
+       48 +      `配置文件 ${resolved} 不存在！请创建并填入:\nphone=你的 
+          +手机号\npassword=你的密码`                                    
+       49 +    );                                                        
+       50    }
+       38 -  return JSON.parse(fs.readFileSync(resolved, 'utf-8'));      
+       51 +  const config = {};                                          
+       52 +  fs.readFileSync(resolved, 'utf-8').split('\n').forEach((line
+          +) => {                                                        
+       53 +    const [key, value] = line.split('=');                     
+       54 +    if (key && value) config[key.trim()] = value.trim();      
+       55 +  });                                                         
+       56 +  if (!config.phone || !config.password) {                    
+       57 +    throw new Error('配置文件缺少 phone 或 password 字段');   
+       58 +  }                                                           
+       59 +  return { phone: config.phone, password: config.password };  
+       60  }
+       61  
+       41 -// 把 cookies.json 的扁平 {name: value} 转成 Playwright 的 coo
+          -kie 数组                                                      
+       42 -function toPlaywrightCookies(cookies, domain = 'geekbang.org')
+          - {                                                            
+       43 -  return Object.entries(cookies).map(([name, value]) => ({    
+       44 -    name,                                                     
+       45 -    value: String(value),                                     
+       46 -    domain,                                                   
+       47 -    path: '/',                                                
+       48 -  }));                                                        
+       62 +// ============ 浏览器内登录 ============                     
+       63 +                                                              
+       64 +/**                                                           
+       65 + * 在浏览器上下文里完成登录（与 account.geekbang.org 同源 fetc
+          +h 登录），                                                    
+       66 + * 使会话 Cookie 绑定到 Chrome 的 TLS 指纹。                  
+       67 + * @param {import('playwright').Page} page 已打开 account.geek
+          +bang.org 的页面                                               
+       68 + * @returns {Promise<void>}                                   
+       69 + */                                                           
+       70 +async function loginInBrowser(page, { phone, password }) {    
+       71 +  const result = await page.evaluate(                         
+       72 +    async ({ phone, password }) => {                          
+       73 +      const r = await fetch('/account/ticket/login', {        
+       74 +        method: 'POST',                                       
+       75 +        headers: { 'Content-Type': 'application/json' },      
+       76 +        credentials: 'include',                               
+       77 +        body: JSON.stringify({                                
+       78 +          cellphone: phone,                                   
+       79 +          password,                                           
+       80 +          captcha: '',                                        
+       81 +          remember: 1,                                        
+       82 +          appid: 1,                                           
+       83 +          country: 86,                                        
+       84 +          platform: 3,                                        
+       85 +        }),                                                   
+       86 +      });                                                     
+       87 +      const j = await r.json();                               
+       88 +      return { status: r.status, code: j.code, msg: j.msg || j
+          +.error?.msg };                                                
+       89 +    },                                                        
+       90 +    { phone, password }                                       
+       91 +  );                                                          
+       92 +                                                              
+       93 +  if (result.code !== 0) {                                    
+       94 +    throw new Error(`浏览器内登录失败: code=${result.code}, ms
+          +g=${result.msg || '未知错误'}`);                              
+       95 +  }                                                           
+       96  }
+       97  
+       51 -// 正文渲染完成的判定选择器（slate 段落/标题，或正文容器）    
+       52 -const CONTENT_READY_SELECTOR =                                
+       53 -  '[data-slate-type="paragraph"], [data-slate-type="heading"],
+          - [class*="articleContent"]';                                  
+       98 +// ============ 页面操作 ============                         
+       99  
+      100  /**
+       56 - * 在页面内自动滚动到底部，触发懒加载的文章正文逐段渲染，     
+       57 - * 直到页面高度不再增长或达到最大滚动次数。                   
+      101 + * 在页面内滚动到底部，触发懒加载的正文段落/图片渲染。        
+      102 + * 极客时间文章页是固定高度布局，正文在一个 SimpleBar 容器内滚
+          +动，                                                          
+      103 + * 所以除了 window 还要滚动 .simplebar-content-wrapper。      
+      104   */
+       59 -function scrollToTriggerLazyLoad(page, maxScrolls = 60) {     
+      105 +function scrollToTriggerLazyLoad(page, maxScrolls = 30) {     
+      106    return page.evaluate((maxScrolls) => {
+      107      return new Promise((resolve) => {
+      108        const delay = (ms) => new Promise((r) => setTimeout(r, m
+           s));
+       63 -      let prev = 0;                                           
+      109 +      let prevTotal = 0;                                      
+      110        let i = 0;
+      111        const tick = async () => {
+       66 -        const targets = [document.documentElement, document.bo
+          -dy];                                                          
+       67 -        const scrollable = targets.find(                      
+       68 -          (t) => t.scrollHeight > t.clientHeight + 50         
+       69 -        );                                                    
+       70 -        const el = scrollable || document.body;               
+       71 -        el.scrollTop = el.scrollHeight;                       
+       72 -        await delay(250);                                     
+       73 -        const cur = el.scrollHeight;                          
+       74 -        if (cur === prev || ++i >= maxScrolls) return resolve(
+          -);                                                            
+       75 -        prev = cur;                                           
+      112 +        // 同时滚动 window 和所有 SimpleBar 容器              
+      113 +        window.scrollTo(0, document.body.scrollHeight);       
+      114 +        document.querySelectorAll('.simplebar-content-wrapper'
+          +).forEach((el) => {                                           
+      115 +          el.scrollTop = el.scrollHeight;                     
+      116 +        });                                                   
+      117 +        await delay(200);                                     
+      118 +        const total = document.body.scrollHeight + Array.from(
+          +document.querySelectorAll('.simplebar-content-wrapper')).reduc
+          +e((s, el) => s + el.scrollHeight, 0);                         
+      119 +        if (total === prevTotal || ++i >= maxScrolls) return r
+          +esolve();                                                     
+      120 +        prevTotal = total;                                    
+      121          return tick();
+      122        };
+      123        tick();
+     ...
+      125    }, maxScrolls);
+      126  }
+      127  
+      128 +// ============ 主函数 ============                           
+      129 +                                                              
+      130  /**
+       84 - * 用无头浏览器打开文章页，等待正文渲染后提取。               
+      131 + * 用无头浏览器打开文章页，登录并等待正文渲染后提取。         
+      132   * @param {number|string} articleId 文章 id（与 URL `/column/a
+           rticle/{id}` 一致）
+      133   * @param {object} [options]
+       87 - * @param {string} [options.cookiePath] cookies.json 路径，默 
+          -认取本文件同目录                                              
+      134 + * @param {object} [options.credentials] 覆盖登录账号 {phone, 
+          +password}；缺省读 .env                                        
+      135 + * @param {string} [options.envPath] .env 路径，默认取本文件同
+          +目录                                                          
+      136   * @param {'html'|'text'|'full'} [options.mode='html']
+      137   *   html: 正文容器 innerHTML（Slate 渲染结果，含 data-slate-t
+           ype）
+      138   *   text: 正文容器纯文本
+      139   *   full: 整页渲染后的完整 HTML（document.documentElement.out
+           erHTML）
+      140   * @param {boolean} [options.headless=true] 设为 false 可观察
+           浏览器执行过程
+      141   * @param {number} [options.waitTimeout=30000] 等待正文渲染的
+           超时（毫秒）
+       94 - * @param {number} [options.maxScrolls=60] 自动滚动的最大次数 
+          -（触发懒加载）                                                
+      142 + * @param {number} [options.maxScrolls=30] 自动滚动最大次数（ 
+          +触发懒加载）                                                  
+      143   * @returns {Promise<{
+      144   *   articleId: number,
+      145   *   title: string,
+     ...
+      152   */
+      153  async function extractArticle(articleId, options = {}) {
+      154    const mode = options.mode || 'html';
+      107 -  const cookies = loadCookies(options.cookiePath);            
+      155 +  const credentials = options.credentials || loadEnvCredential
+          +s(options.envPath);                                           
+      156    const chromium = getChromium();
+      157  
+      158    let browser = null;
+     ...
+      164      });
+      165  
+      166      const context = await browser.newContext({
+      119 -      // 伪装成真实桌面浏览器 UA，降低被反爬识别的概率        
+      120 -      userAgent:                                              
+      121 -        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Apple
+          -WebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.
+          -36',                                                          
+      167 +      userAgent: DESKTOP_UA,                                  
+      168 +      viewport: { width: 1280, height: 800 },                 
+      169      });
+      123 -    await context.addCookies(toPlaywrightCookies(cookies));   
+      124 -                                                              
+      170      const page = await context.newPage();
+      171 +                                                              
+      172 +    // 1. 在浏览器内登录，拿到绑定 Chrome 指纹的会话 Cookie   
+      173 +    await page.goto('https://account.geekbang.org/', {        
+      174 +      waitUntil: 'domcontentloaded',                          
+      175 +      timeout: options.waitTimeout ?? 30000,                  
+      176 +    });                                                       
+      177 +    await loginInBrowser(page, credentials);                  
+      178 +                                                              
+      179 +    // 2. 打开文章页                                          
+      180      const url = `https://time.geekbang.org/column/article/${ar
+           ticleId}`;
+      181      const response = await page.goto(url, {
+      182        waitUntil: 'domcontentloaded',
+      183        timeout: options.waitTimeout ?? 30000,
+      184      });
+      185  
+      132 -    // 等待正文真正渲染出来（否则会拿到空壳 <div id="app"></di
+          -v>）                                                          
+      186 +    // 3. 等待正文真正渲染出来（否则会拿到空壳 <div id="app"><
+          +/div>）                                                       
+      187      await page.waitForSelector(CONTENT_READY_SELECTOR, {
+      188        timeout: options.waitTimeout ?? 30000,
+      189      });
+      136 -    // 自动滚动触发懒加载的正文段落                           
+      137 -    await scrollToTriggerLazyLoad(page, options.maxScrolls ?? 
+          -60);                                                          
+      138 -    // 再等网络空闲，尽量让懒加载图片/样式完成                
+      190 +    // 自动滚动触发懒加载的正文段落/图片                      
+      191 +    await scrollToTriggerLazyLoad(page, options.maxScrolls ?? 
+          +30);                                                          
+      192      await page.waitForLoadState('networkidle').catch(() => {})
+           ;
+      193  
+      194 +    // 4. 校验是否为已购买的完整正文（登录失败时页面会退化成" 
+          +预览版 + 立即购买"）                                          
+      195 +    const previewCheck = await page.evaluate(() => {          
+      196 +      const c = document.querySelector('[class*="articleConten
+          +t"]');                                                        
+      197 +      const text = c ? c.innerText : '';                      
+      198 +      return {                                                
+      199 +        hasBuyBtn: /立即购买/.test(text),                     
+      200 +        paraCount: c ? c.querySelectorAll('[data-slate-type="p
+          +aragraph"]').length : 0,                                      
+      201 +      };                                                      
+      202 +    });                                                       
+      203 +    if (previewCheck.hasBuyBtn || previewCheck.paraCount < 2) 
+          +{                                                             
+      204 +      throw new Error(                                        
+      205 +        `文章页显示的是预览版（登录态异常），仅提取到 ${previe
+          +wCheck.paraCount} 段正文。请检查 .env 账号是否有权限阅读该专栏
+          +。`                                                           
+      206 +      );                                                      
+      207 +    }                                                         
+      208 +                                                              
+      209 +    // 5. 提取                                                
+      210      const extracted = await page.evaluate((mode) => {
+      211        const container =
+      212          document.querySelector('[class*="articleContent"]') ||
+     ...
+      242    }
+      243  }
+      244  
+      176 -module.exports = { extractArticle, toPlaywrightCookies, loadCo
+          -okies };                                                      
+      245 +const CONTENT_READY_SELECTOR =                                
+      246 +  '[data-slate-type="paragraph"], [data-slate-type="heading"],
+          + [class*="articleContent"]';                                  
+      247 +                                                              
+      248 +module.exports = { extractArticle, loadEnvCredentials, loginIn
+          +Browser };                                                    
+
+  Thought for 2s (ctrl+o to expand)
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 4 lines
+      39  const DESKTOP_UA =
+      40    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
+          537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+      41  
+      42 +// 正文渲染完成的判定选择器（slate 段落/标题，或正文容器）     
+      43 +const CONTENT_READY_SELECTOR =                                 
+      44 +  '[data-slate-type="paragraph"], [data-slate-type="heading"], 
+         +[class*="articleContent"]';                                    
+      45 +                                                               
+      46  // ============ 配置 ============
+      47  
+      48  function loadEnvCredentials(envPath) {
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Error editing file
+
+  Thought for 3s, read 1 file (ctrl+o to expand)
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Removed 3 lines
+      246    }
+      247  }
+      248  
+      249 -const CONTENT_READY_SELECTOR =                                
+      250 -  '[data-slate-type="paragraph"], [data-slate-type="heading"],
+          - [class*="articleContent"]';                                  
+      251 -                                                              
+      249  module.exports = { extractArticle, loadEnvCredentials, loginIn
+           Browser };
+
+⏺ Now let me test the final version of 方案2 (and re-verify 方案1):
+
+  Thought for 3s, ran 1 shell command (ctrl+o to expand)
+
+⏺ 方案1 hit HTTP 452 (WAF rate-limit from my repeated tests). Let me wait a
+  moment and retry:
+
+  Thought for 5s, ran 1 shell command (ctrl+o to expand)
+
+⏺ 方案1's saved session got flagged by WAF. Let me refresh it with a fresh node
+  login (same flow as geektime-fetcher.cjs), which should also confirm the 452
+  is session-based:
+
+⏺ Write(/tmp/refresh-cookies.cjs)
+  ⎿  Wrote 58 lines to ../../../../../tmp/refresh-cookies.cjs
+       1 const https = require('https');
+       2 const fs = require('fs');
+       3 
+       4 function request(options, data = null) {
+       5   return new Promise((resolve, reject) => {
+       7       let body = '';
+       8       res.on('data', (c) => (body += c));
+       9       res.on('end', () => {
+      10         try { resolve({ statusCode: res.statusCode, headers: res
+         .headers, body: JSON.parse(body) }); }
+     … +62 lines (ctrl+o to expand)
+
+  Thought for 1s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Fresh node login resolved the 452 — cookies.json is refreshed and 方案1's API
+  returns full content again. Now let me run the complete final test of both
+  functions:
+
+  Thought for 5s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Both functions verified working. Let me update the task and give a summary:
+
+  Thought for 1s, ran 1 shell command (ctrl+o to expand)
+
+⏺ 完成。两个方案各一个独立文件，均已实测通过。
+
+  新增文件
+
+  方案1 — extract-article-api.cjs（JSON 接口，零依赖，最快）
+  - 导出 fetchArticle(articleId, options?)，直接 POST
+  https://time.geekbang.org/serv/v1/article，返回 { articleId, title, author, 
+  ctime, content, contentType, metadata }，metadata 里有音频/封面/附件等 73
+  个字段。
+  - 实测：文章 1005603，正文 8508 字符 HTML，含全部章节（有「思考题」）。
+
+  方案2 — extract-article-browser.cjs（无头浏览器渲染，需 playwright）
+  - 导出 extractArticle(articleId, options?)，mode 支持 html（默认，Slate 标记
+  DOM，可直接喂 convert.cjs）/ text / full。
+  - 实测：11 个标题与你手存的 page.html 完全一致，statusCode 200，单篇约 12s。
+
+  测试命令
+
+  # 方案1
+  node -e "require('./extract-article-api.cjs').fetchArticle(1005603).then(r=>co
+  nsole.log(r.title, r.content.length))"
+  # 方案2
+  node -e "require('./extract-article-browser.cjs').extractArticle(1005603).then
+  (r=>console.log(r.title, r.content.length))"
+
+  过程中发现的关键坑（影响方案设计）
+
+  1. 文章页是 Vue SPA：正文由前端调 /serv/v1/article 渲染，GET 
+  /column/article/{id} 只是空壳——这是你最初"html 不是最终产物"的根因。
+  2. WAF 会话绑定 TLS 指纹：直接注入 cookies.json
+  到浏览器会失效（页面退化成"未登录 + 立即购买"的预览版）。因为
+  acw_tc/GCID/GCESS 绑定客户端 TLS 指纹，node 里登录的 cookie 给 Chrome
+  用会被判定无效。方案2 因此改为在浏览器内用 .env 账号密码重新登录，拿到绑定
+  Chrome 指纹的会话。
+  3. 固定高度布局：正文在 SimpleBar 容器内滚动，不是 window 滚动，懒加载用
+  window.scrollTo 触发不了。
+  4. 方案1 的接口用 {"id": N} 就能拿到全文（比浏览器预览更全）；但注意 API
+  有频率/WAF 限制，本次测试中旧会话被 452 拦截过一次，已用 node 重新登录刷新了
+  cookies.json。
+
+  其他改动
+
+  - package.json / pnpm-lock.yaml：新增 playwright 依赖（复用系统
+  Chrome，无需下载浏览器）。
+  - cookies.json：已被刷新（旧会话被 WAF 标记）。
+
+  两个文件都是独立 CommonJS 模块、可直接 require 测试，没有改动你现有的
+  geektime-fetcher.cjs 和 convert.cjs。要不要我把它们接进 convert.cjs
+  做成"抓取→Markdown"一条龙？
+
+✻ Cogitated for 10m 41s
+
+❯ /export 极客时间.html                                                         
+  ⎿  Conversation exported to:
+     /Users/jialuzhang/mycode/geektime-keepsake/geektime-tools/极客时间.html
+
+※ recap: Implemented two article-extraction functions for GeekTime: extract-article-api.cjs (JSON API) and extract-article-browser.cjs (headless browser), both tested working. Next step is optional: wiring them into convert.cjs for a fetch-to-Markdown pipeline if you want. (disable recaps in /config)
+
+❯ 为什么连续2次执行 node -e "require('./extract-article-browser.cjs').extractAr 
+  ticle(1005603).then(r=>console.log(r.title, r.content))"                      
+  ,第二次会提示文章页显示的是预览版（登录态异常），仅提取到 7 段正文。请检查    
+  .env 账号是否有权限阅读该专栏                                                 
+  ⎿  ⧉ Selected 1 lines from extract-article-browser.cjs in Visual Studio Code
+
+  Thought for 25s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Now both runs fail — but login returns code=0. The browser isn't establishing
+  a working session on time.geekbang.org. Earlier my successful test navigated
+  to time.geekbang.org home before the article. Let me test whether that
+  intermediate navigation (SSO handshake) is the missing piece, vs. login
+  rate-limiting:
+
+⏺ Write(/tmp/debug-login2.cjs)
+  ⎿  Wrote 39 lines to ../../../../../tmp/debug-login2.cjs
+       1 const { chromium } = require('/Users/jialuzhang/mycode/geektime-
+       2 const fs = require('fs');
+       4 const env = fs.readFileSync('/Users/jialuzhang/mycode/geektime-k
+         eepsake/geektime-tools/.env', 'utf-8');
+       6 env.split('\n').forEach(l => { const [k, v] = l.split('='); if (
+       7 
+       9   const browser = await chromium.launch({ channel: 'chrome', hea
+         dless: true, args: ['--disable-blink-features=AutomationControll
+      10   const context = await browser.newContext({ userAgent: 'Mozilla
+         ML, like Gecko) Chrome/126.0.0.0
+     … +48 lines (ctrl+o to expand)
+
+  Thought for 7s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Intermediate navigation didn't help either — both still show preview. This
+  looks like account-level rate limiting from my many rapid logins. Let me
+  verify the account itself is fine via the node API (which was refreshed
+  earlier) and check timing:
+
+  Thought for 16s, ran 2 shell commands (ctrl+o to expand)
+⏺ cookies.json was deleted (git shows D cookies.json) — that explains 方案1
+  failing now, but 方案2 doesn't use it. Let me re-run the exact flow that
+  succeeded earlier (debug-login.cjs) to isolate whether it's rate-limiting vs.
+  an implementation difference:
+
+  Thought for 5s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Even the exact previously-successful flow now shows preview — confirming this
+  is not an implementation difference but time/rate related. Before waiting out
+  a cooldown, let me inspect the cookie scoping deterministically (is the
+  session cookie even sent to time.geekbang.org?):
+
+⏺ Write(/tmp/debug-cookie-scope.cjs)
+  ⎿  Wrote 42 lines to ../../../../../tmp/debug-cookie-scope.cjs
+      1 const { chromium } = require('/Users/jialuzhang/mycode/geektime-k
+      2 const fs = require('fs');
+      3 const env = fs.readFileSync('/Users/jialuzhang/mycode/geektime-ke
+      4 const cfg = {};
+         && v) cfg[k.trim()] = v.trim(); });
+      6 
+      8   const browser = await chromium.launch({ channel: 'chrome', head
+        less: true, args: ['--disable-blink-features=AutomationControlled
+      9   const context = await browser.newContext({ userAgent: 'Mozilla/
+        , like Gecko) Chrome/126.0.0.0 Safari/537.36
+     … +57 lines (ctrl+o to expand)
+
+  Thought for 17s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Smoking gun: cookie scoping is correct (GCID/GCESS are .geekbang.org, shared
+  to time.geekbang.org) — but the article XHR sends NO Cookie header at all, so
+  the server returns preview. The page's XHR is dropping credentials. Let me
+  test forcing the Cookie header onto requests using the browser's own
+  freshly-logged-in cookies:
+
+⏺ Write(/tmp/debug-forced-cookie.cjs)
+  ⎿  Wrote 36 lines to ../../../../../tmp/debug-forced-cookie.cjs
+      1 const { chromium } = require('/Users/jialuzhang/mycode/geektime-k
+      2 const fs = require('fs');
+      3 const env = fs.readFileSync('/Users/jialuzhang/mycode/geektime-ke
+      4 const cfg = {};
+         && v) cfg[k.trim()] = v.trim(); });
+      6 
+      8   const browser = await chromium.launch({ channel: 'chrome', head
+        less: true, args: ['--disable-blink-features=AutomationControlled
+      9   const context = await browser.newContext({ userAgent: 'Mozilla/
+        , like Gecko) Chrome/126.0.0.0 
+     … +49 lines (ctrl+o to expand)
+
+  Thought for 16s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Breakthrough — it works! Forcing the browser's own post-login cookies onto the
+  request header gives 47 paragraphs, 11 headings, full content — even right
+  after the failing runs. The page's XHR was silently omitting cookies;
+  setExtraHTTPHeaders forces them. Let me fix 方案2 with this:
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 3 lines, removed 1 line
+      11  // ⚠️ 登录方式说明：
+      12  //   极客时间把会话 Cookie（acw_tc / GCID / GCESS 等）绑定到客
+          户端的 TLS 指纹，
+      13  //   直接用 cookies.json 里的值注入浏览器会失效（返回"用户未购
+          买此专栏"的预览版）。
+      14 -//   因此本实现会在浏览器内用 .env 的账号密码重新登录，拿到绑定
+         - Chrome 指纹的会话。                                           
+      14 +//   因此本实现会在浏览器内用 .env 的账号密码重新登录，拿到绑定
+         + Chrome 指纹的会话；                                           
+      15 +//   并且登录后会把会话 Cookie 强制附加到所有请求头（见 forceSe
+         +ssionCookieHeader），                                          
+      16 +//   因为文章页在登录态识别异常时，正文 XHR 可能不带任何 Cookie
+         + 而退化成预览版。                                              
+      17  //
+      18  // 前置：使用系统已安装的 Google Chrome（无需 `playwright insta
+          ll` 下载浏览器）。
+      19  //   安装依赖：pnpm add playwright
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 15 lines
+      101    }
+      102  }
+      103  
+      104 +// ============ 会话 Cookie 强化 ============                 
+      105 +                                                              
+      106 +/**                                                           
+      107 + * 把浏览器内登录后获得的会话 Cookie 强制附加到所有请求的 Cook
+          +ie 头。                                                       
+      108 + * 背景：文章页在登录态识别异常时，正文 XHR 可能完全不带 Cooki
+          +e，                                                           
+      109 + * 导致接口返回"用户未购买此专栏"的预览版。setExtraHTTPHeaders
+          + 可强制带上，                                                 
+      110 + * 使同一份（绑定 Chrome 指纹的）会话 Cookie 被正文接口认可。 
+      111 + */                                                           
+      112 +async function forceSessionCookieHeader(context) {            
+      113 +  const cookies = await context.cookies('https://time.geekbang
+          +.org/');                                                      
+      114 +  const cookieStr = cookies.map((c) => `${c.name}=${c.value}`)
+          +.join('; ');                                                  
+      115 +  await context.setExtraHTTPHeaders({ Cookie: cookieStr });   
+      116 +  return cookieStr;                                           
+      117 +}                                                             
+      118 +                                                              
+      119  // ============ 页面操作 ============
+      120  
+      121  /**
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 2 lines
+      197      });
+      198      await loginInBrowser(page, credentials);
+      199      console.log('🔑 浏览器内登录完成');
+      200 +    // 强制携带会话 Cookie，避免正文 XHR 不带 Cookie 退化成预 
+          +览版                                                          
+      201 +    await forceSessionCookieHeader(context);                  
+      202      // 2. 打开文章页
+      203      const url = `https://time.geekbang.org/column/article/${ar
+           ticleId}`;
+      204      const response = await page.goto(url, {
+
+  Thought for 1s (ctrl+o to expand)
+
+⏺ Now update the exports and test the fix with consecutive runs:
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 1 line, removed 1 line
+      265    }
+      266  }
+      267  
+      268 -module.exports = { extractArticle, loadEnvCredentials, loginIn
+          -Browser };                                                    
+      268 +module.exports = { extractArticle, loadEnvCredentials, loginIn
+          +Browser, forceSessionCookieHeader };                          
+
+  Thought for 24s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Run 1 succeeds now, but consecutive run 2 still fails — the second rapid login
+  produces a session the article endpoint rejects (server-side anti-abuse on
+  rapid consecutive logins). The clean fix: persist the browser profile so
+  consecutive runs reuse the first run's valid session instead of re-logging in.
+  Let me restructure:
+
+  Thought for 16s, read 1 file (ctrl+o to expand)
+
+⏺ Let me rewrite the main function to use a persistent profile (reuse session on
+  consecutive runs) with a login-if-needed flow, preserving the user's logging
+  additions:
+
+⏺ Write(extract-article-browser.cjs)
+  ⎿  Added 110 lines, removed 78 lines
+      11  // ⚠️ 登录方式说明：
+      12  //   极客时间把会话 Cookie（acw_tc / GCID / GCESS 等）绑定到客
+          户端的 TLS 指纹，
+      13  //   直接用 cookies.json 里的值注入浏览器会失效（返回"用户未购
+          买此专栏"的预览版）。
+      14 -//   因此本实现会在浏览器内用 .env 的账号密码重新登录，拿到绑定
+         - Chrome 指纹的会话；                                           
+      15 -//   并且登录后会把会话 Cookie 强制附加到所有请求头（见 forceSe
+         -ssionCookieHeader），                                          
+      16 -//   因为文章页在登录态识别异常时，正文 XHR 可能不带任何 Cookie
+         - 而退化成预览版。                                              
+      14 +//   因此本实现会在浏览器内用 .env 的账号密码重新登录，拿到绑定
+         + Chrome 指纹的会话。                                           
+      15 +//   另外两个关键点：                                          
+      16 +//   1) 登录后会把会话 Cookie 强制附加到所有请求头（forceSessio
+         +nCookieHeader），                                              
+      17 +//      因为文章页在登录态识别异常时，正文 XHR 可能不带任何 Coo
+         +kie 而退化成预览版；                                           
+      18 +//   2) 默认复用持久化的浏览器 profile（.browser-profile/），第
+         + 2 次及以后直接复用                                            
+      19 +//      已有登录会话、不重复登录——极客时间对短时间内连续登录会 
+         +判定为可疑，                                                   
+      20 +//      新会话在正文接口上可能仍只给预览版。                   
+      21  //
+      22  // 前置：使用系统已安装的 Google Chrome（无需 `playwright insta
+          ll` 下载浏览器）。
+      23  //   安装依赖：pnpm add playwright
+     ...
+      49  const CONTENT_READY_SELECTOR =
+      50    '[data-slate-type="paragraph"], [data-slate-type="heading"], 
+          [class*="articleContent"]';
+      51  
+      52 +// 默认持久化 profile 目录：第 2 次起复用登录会话              
+      53 +const DEFAULT_PROFILE_DIR = path.join(__dirname, '.browser-prof
+         +ile');                                                         
+      54 +                                                               
+      55  // ============ 配置 ============
+      56  
+      57  function loadEnvCredentials(envPath) {
+     ...
+      111  // ============ 会话 Cookie 强化 ============
+      112  
+      113  /**
+      107 - * 把浏览器内登录后获得的会话 Cookie 强制附加到所有请求的 Cook
+          -ie 头。                                                       
+      114 + * 把浏览器当前会话 Cookie 强制附加到所有请求的 Cookie 头。   
+      115   * 背景：文章页在登录态识别异常时，正文 XHR 可能完全不带 Cooki
+           e，
+      116   * 导致接口返回"用户未购买此专栏"的预览版。setExtraHTTPHeaders
+            可强制带上，
+      117   * 使同一份（绑定 Chrome 指纹的）会话 Cookie 被正文接口认可。
+     ...
+      153    }, maxScrolls);
+      154  }
+      155  
+      156 +/** 检测文章页是否为"未登录/未购买"的预览版（预览版含"立即购买
+          +"按钮且段落很少） */                                          
+      157 +async function isPreview(page) {                              
+      158 +  return page.evaluate(() => {                                
+      159 +    const c = document.querySelector('[class*="articleContent"
+          +]');                                                          
+      160 +    const text = c ? c.innerText : '';                        
+      161 +    return {                                                  
+      162 +      hasBuyBtn: /立即购买/.test(text),                       
+      163 +      paraCount: c ? c.querySelectorAll('[data-slate-type="par
+          +agraph"]').length : 0,                                        
+      164 +    };                                                        
+      165 +  });                                                         
+      166 +}                                                             
+      167 +                                                              
+      168 +/**                                                           
+      169 + * 导航到文章页、等待渲染并提取。若落在预览版则返回 null。    
+      170 + */                                                           
+      171 +async function loadArticle(page, articleId, options) {        
+      172 +  const mode = options.mode || 'html';                        
+      173 +  const url = `https://time.geekbang.org/column/article/${arti
+          +cleId}`;                                                      
+      174 +  const response = await page.goto(url, {                     
+      175 +    waitUntil: 'domcontentloaded',                            
+      176 +    timeout: options.waitTimeout ?? 30000,                    
+      177 +  });                                                         
+      178 +  await page.waitForSelector(CONTENT_READY_SELECTOR, {        
+      179 +    timeout: options.waitTimeout ?? 30000,                    
+      180 +  });                                                         
+      181 +  await scrollToTriggerLazyLoad(page, options.maxScrolls ?? 30
+          +);                                                            
+      182 +  await page.waitForLoadState('networkidle').catch(() => {}); 
+      183 +                                                              
+      184 +  const preview = await isPreview(page);                      
+      185 +  if (preview.hasBuyBtn || preview.paraCount < 2) return null;
+      186 +                                                              
+      187 +  const extracted = await page.evaluate((mode) => {           
+      188 +    const container =                                         
+      189 +      document.querySelector('[class*="articleContent"]') ||  
+      190 +      document.querySelector('#app');                         
+      191 +    const title =                                             
+      192 +      document.querySelector('meta[property="og:title"]')?.con
+          +tent ||                                                       
+      193 +      document.querySelector('title')?.textContent ||         
+      194 +      '';                                                     
+      195 +    let content = '';                                         
+      196 +    if (mode === 'text') {                                    
+      197 +      content = container ? container.innerText : document.bod
+          +y.innerText;                                                  
+      198 +    } else if (mode === 'full') {                             
+      199 +      content = document.documentElement.outerHTML;           
+      200 +    } else {                                                  
+      201 +      content = container                                     
+      202 +        ? container.innerHTML                                 
+      203 +        : document.getElementById('app')?.innerHTML || '';    
+      204 +    }                                                         
+      205 +    return { title, content };                                
+      206 +  }, mode);                                                   
+      207 +                                                              
+      208 +  return {                                                    
+      209 +    articleId: Number(articleId),                             
+      210 +    title: extracted.title,                                   
+      211 +    url,                                                      
+      212 +    mode,                                                     
+      213 +    contentType: mode === 'text' ? 'text/plain' : 'text/html',
+      214 +    content: extracted.content,                               
+      215 +    statusCode: response ? response.status() : null,          
+      216 +  };                                                          
+      217 +}                                                             
+      218 +                                                              
+      219  // ============ 主函数 ============
+      220  
+      221  /**
+      222   * 用无头浏览器打开文章页，登录并等待正文渲染后提取。
+      223 + *                                                            
+      224 + * 默认复用持久化 profile（options.profileDir，默认 .browser-p
+          +rofile/）：                                                   
+      225 + *   - 第 1 次：空 profile → 检测到预览版 → 浏览器内登录 → 强 
+          +制附加会话 Cookie → 重试；                                    
+      226 + *   - 第 2 次起：直接复用已有登录会话，无需重复登录，避免连续
+          +登录被判可疑。                                                
+      227 + *                                                            
+      228   * @param {number|string} articleId 文章 id（与 URL `/column/a
+           rticle/{id}` 一致）
+      229   * @param {object} [options]
+      230   * @param {object} [options.credentials] 覆盖登录账号 {phone, 
+           password}；缺省读 .env
+      231   * @param {string} [options.envPath] .env 路径，默认取本文件同
+           目录
+      232 + * @param {string|false} [options.profileDir] 持久化 profile  
+          +目录；传 false 则每次全新会话                                 
+      233   * @param {'html'|'text'|'full'} [options.mode='html']
+      234   *   html: 正文容器 innerHTML（Slate 渲染结果，含 data-slate-t
+           ype）
+      235   *   text: 正文容器纯文本
+     ...
+      248   * }>}
+      249   */
+      250  async function extractArticle(articleId, options = {}) {
+      175 -  const mode = options.mode || 'html';                        
+      251    const credentials = options.credentials || loadEnvCredential
+           s(options.envPath);
+      252    const chromium = getChromium();
+      253 +  const persistent = options.profileDir !== false;            
+      254 +  const profileDir = options.profileDir || DEFAULT_PROFILE_DIR
+          +;                                                             
+      255  
+      179 -  let browser = null;                                         
+      256 +  const launchOptions = {                                     
+      257 +    channel: 'chrome', // 复用系统已安装的 Google Chrome，免下
+          +载浏览器                                                      
+      258 +    headless: options.headless !== false,                     
+      259 +    args: ['--disable-blink-features=AutomationControlled'],  
+      260 +    userAgent: DESKTOP_UA,                                    
+      261 +    viewport: { width: 1280, height: 800 },                   
+      262 +  };                                                          
+      263 +                                                              
+      264 +  let context = null;                                         
+      265    try {
+      181 -    browser = await chromium.launch({                         
+      182 -      channel: 'chrome', // 复用系统已安装的 Google Chrome，免
+          -下载浏览器                                                    
+      183 -      headless: options.headless !== false,                   
+      184 -      args: ['--disable-blink-features=AutomationControlled'],
+      185 -    });                                                       
+      266 +    if (persistent) {                                         
+      267 +      // launchPersistentContext 返回的就是 BrowserContext；pr
+          +ofile 目录即登录会话的持久化位置                              
+      268 +      context = await chromium.launchPersistentContext(profile
+          +Dir, launchOptions);                                          
+      269 +    } else {                                                  
+      270 +      const browser = await chromium.launch(launchOptions);   
+      271 +      context = await browser.newContext(launchOptions);      
+      272 +    }                                                         
+      273 +    const page = context.pages()[0] || (await context.newPage(
+          +));                                                           
+      274  
+      187 -    const context = await browser.newContext({                
+      188 -      userAgent: DESKTOP_UA,                                  
+      189 -      viewport: { width: 1280, height: 800 },                 
+      190 -    });                                                       
+      191 -    const page = await context.newPage();                     
+      275 +    // 1. 先尝试复用已有会话（第 2 次起命中，无需登录）       
+      276 +    let result = await loadArticle(page, articleId, options); 
+      277 +    if (result) return result;                                
+      278  
+      193 -    // 1. 在浏览器内登录，拿到绑定 Chrome 指纹的会话 Cookie   
+      279 +    // 2. 命中预览版 → 登录 → 强制携带会话 Cookie → 重试      
+      280      await page.goto('https://account.geekbang.org/', {
+      281        waitUntil: 'domcontentloaded',
+      282        timeout: options.waitTimeout ?? 30000,
+      283      });
+      284      await loginInBrowser(page, credentials);
+      285      console.log('🔑 浏览器内登录完成');
+      200 -    // 强制携带会话 Cookie，避免正文 XHR 不带 Cookie 退化成预 
+          -览版                                                          
+      286      await forceSessionCookieHeader(context);
+      202 -    // 2. 打开文章页                                          
+      203 -    const url = `https://time.geekbang.org/column/article/${ar
+          -ticleId}`;                                                    
+      204 -    const response = await page.goto(url, {                   
+      205 -      waitUntil: 'domcontentloaded',                          
+      206 -      timeout: options.waitTimeout ?? 30000,                  
+      207 -    });                                                       
+      287  
+      209 -    // 3. 等待正文真正渲染出来（否则会拿到空壳 <div id="app"><
+          -/div>）                                                       
+      210 -    await page.waitForSelector(CONTENT_READY_SELECTOR, {      
+      211 -      timeout: options.waitTimeout ?? 30000,                  
+      212 -    });                                                       
+      213 -    // 自动滚动触发懒加载的正文段落/图片                      
+      214 -    await scrollToTriggerLazyLoad(page, options.maxScrolls ?? 
+          -30);                                                          
+      215 -    await page.waitForLoadState('networkidle').catch(() => {})
+          -;                                                             
+      288 +    result = await loadArticle(page, articleId, options);     
+      289 +    if (result) return result;                                
+      290  
+      217 -    // 4. 校验是否为已购买的完整正文（登录失败时页面会退化成" 
+          -预览版 + 立即购买"）                                          
+      218 -    const previewCheck = await page.evaluate(() => {          
+      219 -      const c = document.querySelector('[class*="articleConten
+          -t"]');                                                        
+      220 -      const text = c ? c.innerText : '';                      
+      221 -      return {                                                
+      222 -        hasBuyBtn: /立即购买/.test(text),                     
+      223 -        paraCount: c ? c.querySelectorAll('[data-slate-type="p
+          -aragraph"]').length : 0,                                      
+      224 -      };                                                      
+      225 -    });                                                       
+      226 -    if (previewCheck.hasBuyBtn || previewCheck.paraCount < 2) 
+          -{                                                             
+      227 -      throw new Error(                                        
+      228 -        `文章页显示的是预览版（登录态异常），仅提取到 ${previe
+          -wCheck.paraCount} 段正文。请检查 .env 账号是否有权限阅读该专栏
+          -。`                                                           
+      229 -      );                                                      
+      230 -    }                                                         
+      231 -                                                              
+      232 -    // 5. 提取                                                
+      233 -    const extracted = await page.evaluate((mode) => {         
+      234 -      const container =                                       
+      235 -        document.querySelector('[class*="articleContent"]') ||
+      236 -        document.querySelector('#app');                       
+      237 -      const title =                                           
+      238 -        document.querySelector('meta[property="og:title"]')?.c
+          -ontent ||                                                     
+      239 -        document.querySelector('title')?.textContent ||       
+      240 -        '';                                                   
+      241 -      let content = '';                                       
+      242 -      if (mode === 'text') {                                  
+      243 -        content = container ? container.innerText : document.b
+          -ody.innerText;                                                
+      244 -      } else if (mode === 'full') {                           
+      245 -        content = document.documentElement.outerHTML;         
+      246 -      } else {                                                
+      247 -        content = container                                   
+      248 -          ? container.innerHTML                               
+      249 -          : document.getElementById('app')?.innerHTML || '';  
+      250 -      }                                                       
+      251 -      return { title, content };                              
+      252 -    }, mode);                                                 
+      253 -                                                              
+      254 -    return {                                                  
+      255 -      articleId: Number(articleId),                           
+      256 -      title: extracted.title,                                 
+      257 -      url,                                                    
+      258 -      mode,                                                   
+      259 -      contentType: mode === 'text' ? 'text/plain' : 'text/html
+          -',                                                            
+      260 -      content: extracted.content,                             
+      261 -      statusCode: response ? response.status() : null,        
+      262 -    };                                                        
+      291 +    throw new Error(                                          
+      292 +      '登录后文章页仍为预览版（登录态异常）。请检查 .env 账号 
+          +是否有权限阅读该专栏；' +                                     
+      293 +        '若刚连续登录过，可稍等 1~2 分钟或删除 .browser-profil
+          +e/ 目录后重试。'                                              
+      294 +    );                                                        
+      295    } finally {
+      264 -    if (browser) await browser.close();                       
+      296 +    if (context) await context.close();                       
+      297    }
+      298  }
+      299  
+
+  Thought for 9s (ctrl+o to expand)
+
+⏺ One more robustness tweak: on run 2 with a persisted valid session,
+  loadArticle runs before any forced header — so I should force the cookie
+  header before the first attempt too (guarded against empty sessions):
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 3 lines, removed 1 line
+      119  async function forceSessionCookieHeader(context) {
+      120    const cookies = await context.cookies('https://time.geekbang
+           .org/');
+      121    const cookieStr = cookies.map((c) => `${c.name}=${c.value}`)
+           .join('; ');
+      122 -  await context.setExtraHTTPHeaders({ Cookie: cookieStr });   
+      122 +  if (cookieStr) {                                            
+      123 +    await context.setExtraHTTPHeaders({ Cookie: cookieStr }); 
+      124 +  }                                                           
+      125    return cookieStr;
+      126  }
+      127  
+
+⏺ Update(extract-article-browser.cjs)
+  ⎿  Added 2 lines, removed 1 line
+      274      }
+      275      const page = context.pages()[0] || (await context.newPage(
+           ));
+      276  
+      277 -    // 1. 先尝试复用已有会话（第 2 次起命中，无需登录）       
+      277 +    // 1. 先强制附加会话 Cookie 头（无会话时自动跳过），再尝试
+          +复用已有会话（第 2 次起命中，无需登录）                       
+      278 +    await forceSessionCookieHeader(context);                  
+      279      let result = await loadArticle(page, articleId, options);
+      280      if (result) return result;
+      281  
+
+  Thought for 2s (ctrl+o to expand)
+⏺ Now let me test the consecutive runs with the persistent profile (first run
+  logs in, second should reuse the session):
+
+  Thought for 5s, ran 1 shell command (ctrl+o to expand)
+
+⏺ Both consecutive runs pass — run 2 reused the persisted session (no login
+  output). Let me confirm stability with a third run and check what artifacts
+  need gitignoring:
+
+  Thought for 15s, ran 1 shell command (ctrl+o to expand)
+
+⏺ All three consecutive runs now succeed (47 paragraphs each). The fix is
+  stable. Let me add a .gitignore so the persistent profile (which holds live
+  session cookies) never gets committed:
+
+⏺ Write(.gitignore)
+  ⎿  Wrote 5 lines to .gitignore
+      1 # 运行时生成的 Chrome 持久化 profile（含登录会话 Cookie），勿提交
+      2 .browser-profile/
+      3 
+      4 # 登录凭证
+      5 .env
+
+  Thought for 10s, ran 1 shell command (ctrl+o to expand)
+
+⏺ 修复完成，连续 3 次执行都稳定拿到完整正文（47 段、11
+  个标题）。下面是问题根因和改法。
+
+  为什么第二次会变成预览版
+
+  连续执行时真正触发风控的不是脚本逻辑，而是服务器对"短时间内连续登录"的判定：
+
+  1. 之前每跑一次都是一次全新浏览器会话 +
+  一次全新登录。第二次紧跟着的这次登录，接口虽然返回
+  code=0（看起来成功），但极客时间/WAF
+  已把连续快速登录产生的新会话标记为可疑/低信任——于是正文接口只肯给免费预览版（7
+  段 + 「立即购买」）。
+  2. 雪上加霜的是：会话不被信任时，文章页的正文 XHR 甚至会完全不带 Cookie 
+  头（调试里抓到 Cookie: (none)），服务器自然判定「用户未购买」。
+
+  所以同一个 .env 账号权限没问题，是「连续登录」本身被限了。
+
+  改法（extract-article-browser.cjs）
+
+  1. 持久化浏览器 profile（默认 .browser-profile/） ——
+  第一次跑会登录并把会话存进 profile；第二次起直接复用已有会话、不再重复登录，从
+  而绕开连续登录风控。这是解决你问题的关键。
+  2. forceSessionCookieHeader() —— 把当前会话 Cookie
+  强制附加到所有请求头，防止正文 XHR 漏带 Cookie 退化成预览。
+  3. 先试会话、检测到预览版才登录 的流程，并保留清晰的报错提示。
+
+  现在执行流程：
+  - 第 1 次：空 profile → 预览版 → 浏览器内登录 → 强制 Cookie → 完整正文 ✅
+  - 第 2 次起：直接复用已有会话，无登录日志，直接完整正文 ✅
+
+  验证结果
+
+  第1次: 🔑登录 code=0 → OK paras=47
+  第2次: (无登录日志) → OK paras=47
+  第3次: (无登录日志) → OK paras=47
+
+  如果哪天需要强制重新登录：删掉 .browser-profile/ 目录再跑即可。
+
+  另外提醒
+
+  - 方案1 现在会报「Cookie 文件不存在」：cookies.json 被删了（git 里显示 D 
+  cookies.json）。方案1 和原 geektime-fetcher.cjs
+  都依赖它，需要重新生成——直接跑一次 geektime-fetcher.cjs
+  会自动登录并保存，或跑之前那个 node 
+  /tmp/refresh-cookies.cjs。需要我帮你重新生成的话说一声。
+  - 新增了 .gitignore，忽略 .browser-profile/（含真实登录会话）和
+  .env，避免误提交。
+  - package.json / pnpm-lock.yaml 里加了 playwright，这是方案2 的依赖。
+
+  测试命令不变：
+  node -e "require('./extract-article-browser.cjs').extractArticle(1005603).then
+  (r=>console.log(r.title, r.content.length))"
+
+✻ Worked for 5m 25s

@@ -1,0 +1,8 @@
+# 运行时生成的 Chrome 持久化 profile（含登录会话 Cookie），勿提交
+.browser-profile/
+
+# 登录凭证
+.env
+dist*
+cookie.json
+node_modules/
