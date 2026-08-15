@@ -121,3 +121,24 @@ node bin/geektime.cjs sync 1005603 --format md --json | jq '.results[] | select(
   **browser 正文** 由浏览器内重新登录产生（存于 `.browser-profile/`），两者不可混用。
 - 极客时间对连续登录有风控，`login` 不要频繁调用；`--force` 仅在 Cookie 失效时使用。
 - 退出码：0 成功；1 运行出错或同步/转换存在失败项。
+- 仅限个人已购内容备份使用
+
+## 发布到 npm（维护者）
+
+仓库已配置 GitHub Actions 自动发布（`.github/workflows/npm-publish.yml`），打标签即发布：
+
+```bash
+# 1. 提升版本（同时更新 package.json 与 git tag）
+npm version patch     # 或 minor / major
+
+# 2. 推送并触发 Actions 发布（标签 v* 自动发布 + 生成 GitHub Release）
+git push && git push origin --tags
+```
+
+前置要求（一次性）：
+
+1. 在 [npmjs.com](https://www.npmjs.com) 生成一个 **Automation / Publish 权限** 的 Access Token；
+2. 在 GitHub 仓库 → Settings → Secrets and variables → Actions 添加密钥 `NPM_TOKEN`；
+3. 首次发布前本地执行一次 `npm publish --dry-run` 确认包内容（`files` 白名单已排除凭证与下载内容）。
+
+也可在 Actions 页面手动 Run workflow 重新触发发布。
