@@ -1,6 +1,6 @@
 {
   "name": "geektime-tools",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "极客时间内容抓取命令行工具：登录、课程、专栏文章、抓取与转换",
   "bin": {
     "geektime": "./bin/geektime.cjs"
